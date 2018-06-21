@@ -25,17 +25,19 @@ def parse_line(log_line):
 
     REGEX = [
         # universal-transcoder
-        re.compile('.*GET\s\/music\/:\/transcode\/universal\/start\.mp3.*metadata%2F(\d+)\&.*'),
+        { 'type': 'start', 'regex': re.compile('.*GET\s\/music\/:\/transcode\/universal\/start\.mp3.*metadata%2F(\d+)\&.*') },
         # stream based transcoder
-        re.compile('.*\sDEBUG\s-\sLibrary\sitem\s(\d+)\s\'.*\'\sgot\splayed\sby\saccount.*')
+        { 'type': 'start', 'regex': re.compile('.*\sDEBUG\s-\sLibrary\sitem\s(\d+)\s\'.*\'\sgot\splayed\sby\saccount.*') },
+        # TODO: not sure how to test universal-transcoder for starts
+        { 'type': 'end', 'regex': re.compile('.*\sDEBUG\s-\sLibrary\sitem\s(\d+)\s\'.*\'\sgot\splayed\sby\saccount.*') }
     ]
 
-    for regex in REGEX:
-        m = regex.match(log_line)
+    for test in REGEX:
+        m = test['regex'].match(log_line)
 
         if m:
             logger.info('Found played song and extracted library id "{l_id}" from plex log '.format(l_id=m.group(1)))
-            return m.group(1)
+            return { 'type': test['type'], 'id': m.group(1) }
 
 
 def fetch_metadata(l_id, config):
@@ -159,11 +161,11 @@ def monitor_log(config):
 
             # when playing via a client, log lines are duplicated (seen via iOS)
             # this skips dupes. Note: will also miss songs that have been repeated
-            if played == last_played:
+            if played['type'] == last_played['type']:
                 logger.warning('Dupe detection : {0}, not submitting'.format(last_played))
                 continue
 
-            metadata = fetch_metadata(played, config)
+            metadata = fetch_metadata(played['id'], config)
 
             if not metadata:
                 continue
@@ -172,7 +174,10 @@ def monitor_log(config):
             try:
                 logger.info('Attempting to submit {0} - {1} to last.fm'.format(
                             metadata['artist'], metadata['title']))
-                lastfm.scrobble(timestamp=int(time.time()), **metadata)
+                if played['type'] == 'start':
+                    lastfm.update_now_playing(**metadata)
+                else:
+                    lastfm.scrobble(timestamp=int(time.time()), **metadata)
             except Exception as e:
                 logger.error(u'unable to scrobble {0}, adding to cache. error={1}'.format(
                     metadata, e))
